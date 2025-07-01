@@ -9,3 +9,11 @@
 - [ ] политика заведения (по чтению / по записи / по чтению-записи);
 - [ ] тип записи (отложенная / сквозная);
 - [ ] политика вытеснения (LRU / MRU / случайная).
+
+## Запуск проекта 
+```
+git clone https://github.com/mariiamonk/mcst_project.git
+cmake -S . -B build
+cd build
+./mcst_project
+```
