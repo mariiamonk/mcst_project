@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/home/mariia/projects/c++/mcst_project/build",
+  "command": "/usr/bin/g++ -I/home/mariia/projects/c++/mcst_project/. -g -std=gnu++14 -o CMakeFiles/mcst_project.dir/main.cpp.o -c /home/mariia/projects/c++/mcst_project/main.cpp",
+  "file": "/home/mariia/projects/c++/mcst_project/main.cpp"
+},
+{
+  "directory": "/home/mariia/projects/c++/mcst_project/build",
+  "command": "/usr/bin/g++ -I/home/mariia/projects/c++/mcst_project/. -g -std=gnu++14 -o CMakeFiles/mcst_project.dir/src/cache.cpp.o -c /home/mariia/projects/c++/mcst_project/src/cache.cpp",
+  "file": "/home/mariia/projects/c++/mcst_project/src/cache.cpp"
+}
+]

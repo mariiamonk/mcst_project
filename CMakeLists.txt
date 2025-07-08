@@ -5,4 +5,5 @@ set(CMAKE_CXX_STANDARD 14)
 
 include_directories(.)
 
-add_executable(mcst_project main.cpp)
+add_executable(mcst_project main.cpp
+               include/cache.hpp src/cache.cpp)
