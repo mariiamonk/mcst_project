@@ -1,5 +1,5 @@
 #include <iostream>
-#include "include/cache.hpp"
+#include "../include/cache.hpp"
 
 int main(){
     using namespace Cache;
