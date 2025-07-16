@@ -10,7 +10,7 @@
 namespace Cache{
     enum class Operation { READ, WRITE};
 
-    struct Data {
+    struct Data { // vector, модель данных(иерархия их двух штук)
         int* data;
         short capacity{16};
         short count{};
@@ -81,7 +81,7 @@ namespace Cache{
         std::vector<InQuery> out;
     };
 
-    class Cache{
+    class Cache{ // безнаковые отметить u
     protected:
         size_t size;
         uint64_t block_size;        

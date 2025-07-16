@@ -56,7 +56,7 @@ namespace Cache{
         return result;
     }
 
-    void CacheL1::print_cache_state() const {
+    void CacheL1::print_cache_state() const { //переделать
         std::cout << "\n=== Cache State (showing only occupied lines) ===\n";
         std::cout << "Config: " << size << ", " << block_size << "B blocks, "
                 << associativity << ", " << num_lines << " lines\n\n";
@@ -70,6 +70,7 @@ namespace Cache{
             for (const auto& block : line.cache_line) {
                 if (!block.valid) continue;
                 
+                //заменить
                 std::cout << "  B" << block_num++ << ": "
                         << "Tag=0x" << std::hex << block.tag << std::dec
                         << "State:" << (block.state ? "[0]" : "[1]") << " [";

@@ -13,12 +13,9 @@ int main(){
     std::copy_n(test_data.data(), 16, write_data.data);
     write_data.count = 16;
     
-    Data read_data; 
-    
-    auto result = l1_cache.query({Operation::READ, 0x1000, read_data});
-    InQuery write_que = {Operation::WRITE, 0x1000, write_data};
-
-    l1_cache.print_cache_state();
+    Data read_data;
 
     return 0;
 }
+
+//разработать модель памяти и два теста 

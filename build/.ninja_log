@@ -1,5 +1,4 @@
 # ninja log v5
-0	316	1751924941038725420	CMakeFiles/mcst_project.dir/src/cache.cpp.o	e1d1558ff9e1b772
-1	301	1751924890477789566	CMakeFiles/mcst_project.dir/main.cpp.o	b503f007f89cd0a8
-316	359	1751924941082726234	mcst_project	9399941698907b1c
-1	303	1751984028542573457	CMakeFiles/mcst_project.dir/src/cache.cpp.o	e1d1558ff9e1b772
+1	1262	1752704775844911888	CMakeFiles/mcst_project.dir/main.cpp.o	f3b87965c3bf25d0
+1	1294	1752704775876912235	CMakeFiles/mcst_project.dir/src/cache.cpp.o	808971c8b50cc5b5
+1294	1427	1752704776008913669	mcst_project	9399941698907b1c

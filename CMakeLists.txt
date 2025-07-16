@@ -1,9 +1,7 @@
 cmake_minimum_required(VERSION 3.25.1)
-project(mcst_project)
+project(mcst_project VERSION 1.0)
 
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include_directories(.)
-
-add_executable(mcst_project main.cpp
-               include/cache.hpp src/cache.cpp)
+add_subdirectory(src)
