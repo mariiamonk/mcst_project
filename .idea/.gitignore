@@ -6,3 +6,25 @@
 # Datasource local storage ignored files
 /dataSources/
 /dataSources.local.xml
+
+build/
+out/
+bin/
+
+.vscode/
+.idea/
+*.user
+
+*.o
+*.a
+*.so
+*.dll
+*.exe
+
+*.log
+*.tmp
+
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
