@@ -1,5 +1,0 @@
-/home/mariia/projects/c++/mcst_project/build/CMakeFiles/edit_cache.dir
-/home/mariia/projects/c++/mcst_project/build/CMakeFiles/rebuild_cache.dir
-/home/mariia/projects/c++/mcst_project/build/src/CMakeFiles/mcst_project.dir
-/home/mariia/projects/c++/mcst_project/build/src/CMakeFiles/edit_cache.dir
-/home/mariia/projects/c++/mcst_project/build/src/CMakeFiles/rebuild_cache.dir
