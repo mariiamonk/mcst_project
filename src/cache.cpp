@@ -1,87 +1,139 @@
 #include "../include/cache.hpp"
+#include <sstream>
+#include <iomanip>
 
 namespace Cache{
-    auto CacheL1::query(InQuery const& query) -> OutQuery{
+    auto CacheL1::query(InQuery const& query) -> OutQuery {
         OutQuery result;
         uint64_t tag = get_tag(query.address);
         uint64_t index = get_index(query.address);
         auto& line = tag_store[index];
 
-        auto block_f = find_block(line, tag);
-        if(block_f != line.cache_line.end()){ 
-            //попали в кеш
+        // Поиск блока в кэше
+        auto block_it = find_block(line, tag);
+
+        if (block_it != line.cache_line.end()) { // Cache hit
             result.hit = true;
-            move_beg_block(line, block_f);
-
-            switch (query.operation)
-            {
-                case Operation::READ:
-                    move_beg_block(line, block_f);
-
-                    if (query.data.data) {
-                        std::copy_n(block_f->data.data, block_f->data.count, query.data.data);
-                    }
-                    break;
-
-                case Operation::WRITE:
-                    move_beg_block(line, block_f);
-                    if (query.data.count > 0) {
-                        std::copy_n(query.data.data, query.data.count, block_f->data.data);
-                        block_f->data.count = query.data.count;
-                        block_f->state = true;
-                    }
-                    break;
-                default:
-                    break;
+            
+            // Обновляем порядок в соответствии с политикой вытеснения
+            if (repl_policy_ != ReplacementPolicy::RANDOM) {
+                move_beg_block(line, block_it);
             }
-        }else{
-            InQuery mem_op;
-            mem_op.operation = Operation::READ;
-            mem_op.address = query.address & ~((1 << offset_bits) - 1); // выровненный адрес
+
+            if (query.operation == Operation::READ) {
+                // Возвращаем данные через out[0]
+                result.out.emplace_back(InQuery{
+                    Operation::READ,
+                    query.address,
+                    block_it->data
+                });
+            } else { // WRITE
+                block_it->data.fill(query.data.buffer.data(), query.data.valid_count);
+                block_it->dirty = true;
                 
-            if (query.operation == Operation::WRITE) {
-                mem_op.data = query.data;
+                if (write_policy_ == WritePolicy::WRITE_THROUGH) {
+                    // Сквозная запись - сразу в память
+                    result.out.emplace_back(InQuery{
+                        Operation::WRITE,
+                        query.address,
+                        query.data
+                    });
+                    block_it->dirty = false;
+                }
             }
-                
-            result.out.push_back(mem_op);
-                
-            add_block(line, tag, query.data, result);
-                
-            // если это запись, помечаем блок как изменённый
-            if (query.operation == Operation::WRITE && query.data.count > 0) {
-                auto new_block = line.cache_line.begin();
-                new_block->state = true;
+        } else { // Cache miss
+            if (should_allocate(query.operation)) {
+                // Выбираем жертву для вытеснения
+                if (line.count >= associativity) {
+                    auto victim_it = select_victim(line);
+                    result.evicted = true;
+                    result.evicted_tag = victim_it->tag;
+                    
+                    // Если блок "грязный" и политика Write-Back
+                    if (victim_it->dirty && write_policy_ == WritePolicy::WRITE_BACK) {
+                        result.out.emplace_back(InQuery{
+                            Operation::WRITE,
+                            (victim_it->tag << (offset_bits + index_bits)) | (index << offset_bits),
+                            victim_it->data
+                        });
+                    }
+                    
+                    // Переиспользуем блок
+                    victim_it->tag = tag;
+                    victim_it->data = query.data;
+                    victim_it->dirty = (query.operation == Operation::WRITE);
+                    victim_it->valid = true;
+                    
+                    move_beg_block(line, victim_it);
+                } else {
+                    // Добавляем новый блок
+                    line.cache_line.emplace_front(tag, query.data);
+                    line.cache_line.front().dirty = (query.operation == Operation::WRITE);
+                    line.count++;
+                }
+            } else {
+                // Прямая запись в память без заведения блока
+                result.out.push_back(query);
+            }
+            
+            // Если это запись и политика Write-Through
+            if (query.operation == Operation::WRITE && 
+                write_policy_ == WritePolicy::WRITE_THROUGH) {
+                result.out.push_back(query);
             }
         }
+        
         return result;
     }
 
-    void CacheL1::print_cache_state() const { //переделать
-        std::cout << "\n=== Cache State (showing only occupied lines) ===\n";
-        std::cout << "Config: " << size << ", " << block_size << "B blocks, "
-                << associativity << ", " << num_lines << " lines\n\n";
+    void CacheL1::print_cache_state() const {
+        std::cout << "\n=== Cache Configuration ===\n";
+        std::cout << "Size:        " << size << " b\n";
+        std::cout << "Block size:  " << block_size << " b\n";
+        std::cout << "Associativity: " << associativity << "\n";
+        std::cout << "Policy:      " 
+                << (write_policy_ == WritePolicy::WRITE_BACK ? "Write-Back" : "Write-Through") << ", "
+                << (alloc_policy_ == AllocationPolicy::WRITE_ALLOCATE ? "Write-Allocate" : "Read-Allocate") << ", "
+                << (repl_policy_ == ReplacementPolicy::LRU ? "LRU" : "MRU")
+                << "\n";
+
+        std::cout << "\n=== Cache Contents ===\n";
+        bool isEmpty = true;
+        size_t total_blocks = 0;
+        size_t dirty_blocks = 0;
 
         for (const auto& [index, line] : tag_store) {
             if (line.cache_line.empty()) continue;
 
-            std::cout << "Line " << index << " (" << line.count << "/" << associativity << "):\n";
+            std::cout << "Set #" << std::setw(4) << std::left << index 
+                    << " [" << line.count << "/" << associativity << " blocks]:\n";
             
             int block_num = 0;
             for (const auto& block : line.cache_line) {
                 if (!block.valid) continue;
                 
-                //заменить
-                std::cout << "  B" << block_num++ << ": "
-                        << "Tag=0x" << std::hex << block.tag << std::dec
-                        << "State:" << (block.state ? "[0]" : "[1]") << " [";
-                
-                for (int i = 0; i < block.data.count; ++i) {
-                    std::cout << block.data.data[i];
+                isEmpty = false;
+                total_blocks++;
+                if (block.dirty) dirty_blocks++;
+
+                std::cout << "  Block " << block_num++ << ": "
+                        << "Tag=0x" << std::hex << std::setw(8) << std::setfill('0') 
+                        << block.tag << std::dec << std::setfill(' ')
+                        << " State: " << (block.dirty ? "Dirty" : "Clean")
+                        << " Data: [";
+
+                size_t show_count = block.data.valid_count;
+                for (size_t i = 0; i < show_count; ++i) {
+                    std::cout << block.data[i];
+                    if (i < show_count - 1) std::cout << ", ";
                 }
-                if (block.data.count > 3) std::cout << "...";
                 std::cout << "]\n";
             }
         }
-        std::cout << "===================================\n";
+
+        if (isEmpty) {
+            std::cout << "Cache is empty\n";
+        }
+        std::cout << "======================\n\n";
     }
 }
