@@ -21,24 +21,22 @@ namespace Cache{
             }
 
             if (query.operation == Operation::READ) {
-                // Возвращаем данные через out[0]
-                result.out.emplace_back(InQuery{
-                    Operation::READ,
-                    query.address,
-                    block_it->data
-                });
+                // Возвращаем данные из кэша
+                result.returned_data = block_it->data;
             } else { // WRITE
-                block_it->data.fill(query.data.buffer.data(), query.data.valid_count);
-                block_it->dirty = true;
+                // Обновляем данные в кэше
+                if (query.data.valid_count > 0) {
+                    block_it->data.fill(query.data.buffer.data(), query.data.valid_count);
+                }
+                block_it->dirty = (write_policy_ != WritePolicy::WRITE_THROUGH);
                 
                 if (write_policy_ == WritePolicy::WRITE_THROUGH) {
                     // Сквозная запись - сразу в память
                     result.out.emplace_back(InQuery{
                         Operation::WRITE,
                         query.address,
-                        query.data
+                        block_it->data
                     });
-                    block_it->dirty = false;
                 }
             }
         } else { // Cache miss
@@ -60,31 +58,48 @@ namespace Cache{
                     
                     // Переиспользуем блок
                     victim_it->tag = tag;
-                    victim_it->data = query.data;
-                    victim_it->dirty = (query.operation == Operation::WRITE);
+                    if (query.operation == Operation::WRITE) {
+                        victim_it->data = query.data;
+                        victim_it->dirty = true;
+                    } else {
+                        // Для чтения помечаем как негрязный
+                        victim_it->dirty = false;
+                        // Запрашиваем данные из нижнего уровня
+                        result.out.emplace_back(InQuery{
+                            Operation::READ,
+                            query.address,
+                            {},
+                            Data::SIZE
+                        });
+                    }
                     victim_it->valid = true;
                     
                     move_beg_block(line, victim_it);
                 } else {
                     // Добавляем новый блок
                     line.cache_line.emplace_front(tag, query.data);
-                    line.cache_line.front().dirty = (query.operation == Operation::WRITE);
+                    if (query.operation == Operation::WRITE) {
+                        line.cache_line.front().dirty = true;
+                    } else {
+                        // Для чтения запрашиваем данные
+                        result.out.emplace_back(InQuery{
+                            Operation::READ,
+                            query.address,
+                            {},
+                            Data::SIZE
+                        });
+                    }
                     line.count++;
                 }
             } else {
                 // Прямая запись в память без заведения блока
                 result.out.push_back(query);
             }
-            
-            // Если это запись и политика Write-Through
-            if (query.operation == Operation::WRITE && 
-                write_policy_ == WritePolicy::WRITE_THROUGH) {
-                result.out.push_back(query);
-            }
         }
         
         return result;
     }
+
 
     void CacheL1::print_cache_state() const {
         std::cout << "\n=== Cache Configuration ===\n";

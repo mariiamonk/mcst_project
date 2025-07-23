@@ -1,0 +1,7 @@
+# ninja log v6
+1	1632	1753277493656684183	src/CMakeFiles/cache_project.dir/cache.cpp.o	1f96732dce5ea9a5
+0	1850	1753277493656684183	src/CMakeFiles/cache_project.dir/main.cpp.o	a51af302b2c4b62e
+1850	1955	1753277495504701559	src/cache_project	3159f7b8c835ee7c
+3	1681	1753277539285647633	src/CMakeFiles/cache_project.dir/cache.cpp.o	1f96732dce5ea9a5
+2	1957	1753277539285647633	src/CMakeFiles/cache_project.dir/main.cpp.o	a51af302b2c4b62e
+1957	2064	1753277541241690036	src/cache_project	3159f7b8c835ee7c

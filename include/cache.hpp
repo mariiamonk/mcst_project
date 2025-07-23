@@ -8,6 +8,9 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <chrono>
+#include <cstdint>
 
 namespace Cache{
     enum class Operation { READ, WRITE};
@@ -28,7 +31,7 @@ namespace Cache{
         RANDOM 
     };
 
-    struct Data { //модель данных(иерархия их двух штук)
+    struct Data { 
         static constexpr size_t SIZE = 16; 
         std::array<int, SIZE> buffer;     
         size_t valid_count = 0;            // Число действительных элементов
@@ -57,7 +60,6 @@ namespace Cache{
     struct CacheBlock {
         bool valid = false;       
         int tag{};
-        bool state = false;
         bool dirty = false;
         size_t hist{};
         Data data;
@@ -74,20 +76,24 @@ namespace Cache{
         Operation operation;
         uint64_t address;
         Data data;
+        size_t size = Data::SIZE;
     };
 
     struct OutQuery {
         bool hit = false;
         bool evicted = false; // если был вытеснен блок, сохраняем адрес и меняем флаг
         int evicted_tag = -1;
-        std::vector<InQuery> out;
+        std::vector<InQuery> out; // запросы, которые нужно передать дальше
+        std::optional<Data> returned_data; // данные на чтение
 
         const Data* get_data() const {
-            if (hit && !out.empty() && out[0].operation == Operation::READ) {
-                return &out[0].data;
-            }
+            if (returned_data.has_value()) return &returned_data.value();
             return nullptr;
         }
+
+        bool needs_memory_access() const {
+            return !out.empty();
+        }  
     };
 
     class Cache{ // безнаковые отметить u
@@ -109,6 +115,7 @@ namespace Cache{
         std::unordered_map<size_t, CacheLine> tag_store;
 
     public:
+        WritePolicy get_write_policy(){return write_policy_;}
         virtual auto query(InQuery const&) -> OutQuery = 0;  
     };
     
@@ -118,9 +125,9 @@ namespace Cache{
         uint64_t get_tag(uint64_t address) const {
             return address >> (offset_bits + index_bits);
         }
-        
+
         uint64_t get_index(uint64_t address) const {
-            return (address >> offset_bits) & (1 << index_bits) - 1;
+            return (address >> offset_bits) & ((1 << index_bits) - 1);
         }
         
         uint64_t get_offset(uint64_t address) const {
@@ -152,7 +159,7 @@ namespace Cache{
                 result.evicted = true;
                 result.evicted_tag = lru_block->tag;
                 
-                if (lru_block->state) { //если блок был изменен, то его нужно обновить или нужно сохранять все выт. блоки?
+                if (lru_block->dirty) { //если блок был изменен, то его нужно обновить или нужно сохранять все выт. блоки?
                     InQuery mem_op;
                     mem_op.operation = Operation::WRITE;
                     mem_op.address = (lru_block->tag << (offset_bits + index_bits)) | 
@@ -163,7 +170,7 @@ namespace Cache{
                 
                 lru_block->valid = true;
                 lru_block->tag = tag;
-                lru_block->state = false;
+                lru_block->dirty = false;
                 lru_block->data = data;
                 
                 move_beg_block(line, lru_block);
@@ -200,7 +207,7 @@ namespace Cache{
             
             if (write_policy_ == WritePolicy::WRITE_THROUGH) {
                 OutQuery result;
-                InQuery mem_op{Operation::WRITE, block.tag, data};
+                InQuery mem_op{Operation::WRITE, static_cast<uint64_t>(block.tag), data};
                 result.out.push_back(mem_op);
             }
         }
@@ -236,4 +243,26 @@ namespace Cache{
         auto query(InQuery const&) -> OutQuery override;
         void print_cache_state() const;
     };
+
+    class MemoryModel {
+    private:
+        std::unordered_map<uint64_t, Data> memory;
+
+    public:
+        OutQuery query(const InQuery& in) {
+            OutQuery result;
+            result.hit = true;
+            uint64_t aligned_addr = in.address & ~(Data::SIZE - 1);
+            
+            if (in.operation == Operation::READ) {
+                if (memory.count(aligned_addr)) {
+                    result.returned_data = memory[aligned_addr];
+                }
+            } else if (in.operation == Operation::WRITE) {
+                memory[aligned_addr] = in.data;  
+            }
+            return result;
+        }
+    };
+
 }
