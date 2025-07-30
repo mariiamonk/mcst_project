@@ -8,9 +8,8 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cmath>
-#include <map>
-#include <chrono>
-#include <cstdint>
+#include <sstream>
+#include <iomanip>
 
 namespace Cache{
     enum class Operation { READ, WRITE};
@@ -55,13 +54,27 @@ namespace Cache{
         bool operator==(const Data& other) const {
             return buffer == other.buffer && valid_count == other.valid_count;
         }
+
+        
+        void print_data() const {
+            if (valid_count == 0) {
+                std::cout << "<no data>";
+                return;
+            }
+
+            for (size_t i = 0; i < valid_count; ++i) {
+                std::cout << buffer[i];
+                if (i < valid_count - 1) {
+                    std::cout << ", ";
+                }
+            }
+        }
     };
 
     struct CacheBlock {
         bool valid = false;       
-        int tag{};
+        unsigned long int tag{};
         bool dirty = false;
-        size_t hist{};
         Data data;
 
         CacheBlock(int tag, const Data& data) : tag(tag), data(data), valid(true) {}
@@ -69,7 +82,7 @@ namespace Cache{
 
     struct CacheLine {
         std::list<CacheBlock> cache_line;
-        size_t count{}; // для отслеживания ассоциативности
+        unsigned int count{}; // для отслеживания ассоциативности
     }; 
 
     struct InQuery {
@@ -95,9 +108,9 @@ namespace Cache{
             return !out.empty();
         }  
     };
-
-    class Cache{ // безнаковые отметить u
-    protected:
+    
+    class Cache{
+    private:
         size_t size;
         uint64_t block_size;        
         size_t associativity;     
@@ -113,33 +126,6 @@ namespace Cache{
         size_t tag_bits;    
 
         std::unordered_map<size_t, CacheLine> tag_store;
-
-    public:
-        WritePolicy get_write_policy(){return write_policy_;}
-        virtual auto query(InQuery const&) -> OutQuery = 0;  
-    };
-    
-    class CacheL1 : public Cache {
-    private:
-        
-        uint64_t get_tag(uint64_t address) const {
-            return address >> (offset_bits + index_bits);
-        }
-
-        uint64_t get_index(uint64_t address) const {
-            return (address >> offset_bits) & ((1 << index_bits) - 1);
-        }
-        
-        uint64_t get_offset(uint64_t address) const {
-            return address & ((1 << offset_bits) - 1);
-        }
-
-        auto find_block(CacheLine& line, uint64_t tag) { // возвращяем нужный блок
-            return std::find_if(line.cache_line.begin(), line.cache_line.end(),
-                [tag](const CacheBlock& block) { 
-                    return block.valid && block.tag == tag; 
-                });
-        }
    
         // Метод для перемешения блока в начало списка
         void move_beg_block(CacheLine& line, std::list<CacheBlock>::iterator block_it) {
@@ -177,29 +163,41 @@ namespace Cache{
             }
         }
     public:
-        CacheL1(size_t size, uint64_t block_size, size_t associativity, uint64_t address_bits, WritePolicy wp, AllocationPolicy ap, ReplacementPolicy rp){
-            this->size = size;
-            this->block_size = block_size;
-            this->associativity = associativity;
-            this->address_bits = address_bits;
+        Cache(size_t size, uint64_t block_size, size_t associativity, uint64_t address_bits, WritePolicy wp, AllocationPolicy ap, ReplacementPolicy rp) 
+        : size(size), block_size(block_size), associativity(associativity), address_bits(address_bits),
+          write_policy_(wp), alloc_policy_(ap), repl_policy_(rp),
+          num_lines(size / (block_size * associativity)),
+          offset_bits(static_cast<size_t>(log2(block_size))),  index_bits(static_cast<size_t>(log2(num_lines))), tag_bits(address_bits - offset_bits - index_bits){
 
-            this->write_policy_ = wp;
-            this->alloc_policy_ = ap;
-            this->repl_policy_ = rp;
-
-            this->offset_bits = static_cast<size_t>(log2(block_size));
-            this->num_lines = size / (block_size * associativity);
-            this->index_bits = static_cast<size_t>(log2(num_lines));
-            this->tag_bits = address_bits - offset_bits - index_bits;
-
-            this->tag_store.clear();
+            tag_store.clear();
             for (size_t i = 0; i < num_lines; ++i) {
                 CacheLine line;
                 line.count = 0;
-                this->tag_store[i] = line;
+                tag_store[i] = line;
             }
         }
 
+        uint64_t get_tag(uint64_t address) const {
+            return address >> (offset_bits + index_bits);
+        }
+
+        uint64_t get_index(uint64_t address) const {
+            return (address >> offset_bits) & ((1 << index_bits) - 1);
+        }
+        
+        uint64_t get_offset(uint64_t address) const {
+            return address & ((1 << offset_bits) - 1);
+        }
+
+        auto find_block(CacheLine& line, uint64_t tag) { // возвращяем нужный блок
+            return std::find_if(line.cache_line.begin(), line.cache_line.end(),
+                [tag](const CacheBlock& block) { 
+                    return block.valid && block.tag == tag; 
+                });
+        }
+
+        auto get_write_policy(){return write_policy_;}
+        std::unordered_map<size_t, CacheLine>& get_tag_store() { return tag_store; }
 
         void handle_write(CacheBlock& block, const Data& data) {
             block.data = data;
@@ -240,29 +238,7 @@ namespace Cache{
             }
         }
 
-        auto query(InQuery const&) -> OutQuery override;
-        void print_cache_state() const;
+        auto query(InQuery const&) -> OutQuery;
+        void print_cache_state();
     };
-
-    class MemoryModel {
-    private:
-        std::unordered_map<uint64_t, Data> memory;
-
-    public:
-        OutQuery query(const InQuery& in) {
-            OutQuery result;
-            result.hit = true;
-            uint64_t aligned_addr = in.address & ~(Data::SIZE - 1);
-            
-            if (in.operation == Operation::READ) {
-                if (memory.count(aligned_addr)) {
-                    result.returned_data = memory[aligned_addr];
-                }
-            } else if (in.operation == Operation::WRITE) {
-                memory[aligned_addr] = in.data;  
-            }
-            return result;
-        }
-    };
-
 }

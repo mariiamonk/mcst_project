@@ -1,9 +1,8 @@
 #include "../include/cache.hpp"
-#include <sstream>
-#include <iomanip>
+
 
 namespace Cache{
-    auto CacheL1::query(InQuery const& query) -> OutQuery {
+    auto Cache::query(InQuery const& query) -> OutQuery {
         OutQuery result;
         uint64_t tag = get_tag(query.address);
         uint64_t index = get_index(query.address);
@@ -78,10 +77,11 @@ namespace Cache{
                 } else {
                     // Добавляем новый блок
                     line.cache_line.emplace_front(tag, query.data);
-                    if (query.operation == Operation::WRITE) {
-                        line.cache_line.front().dirty = true;
-                    } else {
-                        // Для чтения запрашиваем данные
+                    line.cache_line.front().valid = true;
+                    line.cache_line.front().dirty = (query.operation == Operation::WRITE);
+                    line.count++; // Увеличиваем счетчик
+                    
+                    if (query.operation == Operation::READ) {
                         result.out.emplace_back(InQuery{
                             Operation::READ,
                             query.address,
@@ -89,7 +89,6 @@ namespace Cache{
                             Data::SIZE
                         });
                     }
-                    line.count++;
                 }
             } else {
                 // Прямая запись в память без заведения блока
@@ -101,21 +100,21 @@ namespace Cache{
     }
 
 
-    void CacheL1::print_cache_state() const {
-        std::cout << "\n=== Cache Configuration ===\n";
-        std::cout << "Size:        " << size << " b\n";
-        std::cout << "Block size:  " << block_size << " b\n";
-        std::cout << "Associativity: " << associativity << "\n";
-        std::cout << "Policy:      " 
-                << (write_policy_ == WritePolicy::WRITE_BACK ? "Write-Back" : "Write-Through") << ", "
-                << (alloc_policy_ == AllocationPolicy::WRITE_ALLOCATE ? "Write-Allocate" : "Read-Allocate") << ", "
-                << (repl_policy_ == ReplacementPolicy::LRU ? "LRU" : "MRU")
-                << "\n";
+    void Cache::print_cache_state(){
+        // std::cout << "\n=== Cache Configuration ===\n"
+        // << "Size:        " << size << " b\n"
+        // << "Block size:  " << block_size << " b\n"
+        // << "Associativity: " << associativity << "\n"
+        // << "Policy:      " 
+        //         << (write_policy_ == WritePolicy::WRITE_BACK ? "Write-Back" : "Write-Through") << ", "
+        //         << (alloc_policy_ == AllocationPolicy::WRITE_ALLOCATE ? "Write-Allocate" : "Read-Allocate") << ", "
+        //         << (repl_policy_ == ReplacementPolicy::LRU ? "LRU" : "MRU")
+        //         << "\n";
 
-        std::cout << "\n=== Cache Contents ===\n";
+        std::cout << "\n=== Cache===\n";
         bool isEmpty = true;
-        size_t total_blocks = 0;
-        size_t dirty_blocks = 0;
+        unsigned int total_blocks = 0;
+        unsigned int dirty_blocks = 0;
 
         for (const auto& [index, line] : tag_store) {
             if (line.cache_line.empty()) continue;
@@ -123,7 +122,7 @@ namespace Cache{
             std::cout << "Set #" << std::setw(4) << std::left << index 
                     << " [" << line.count << "/" << associativity << " blocks]:\n";
             
-            int block_num = 0;
+            unsigned int block_num = 0;
             for (const auto& block : line.cache_line) {
                 if (!block.valid) continue;
                 
@@ -137,7 +136,7 @@ namespace Cache{
                         << " State: " << (block.dirty ? "Dirty" : "Clean")
                         << " Data: [";
 
-                size_t show_count = block.data.valid_count;
+                unsigned int show_count = block.data.valid_count;
                 for (size_t i = 0; i < show_count; ++i) {
                     std::cout << block.data[i];
                     if (i < show_count - 1) std::cout << ", ";
@@ -149,6 +148,5 @@ namespace Cache{
         if (isEmpty) {
             std::cout << "Cache is empty\n";
         }
-        std::cout << "======================\n\n";
     }
 }
