@@ -4,7 +4,7 @@ project(cache_project VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(COMMON_SOURCES src/cache.cpp)
+set(COMMON_SOURCES src/cache.cpp src/memory.cpp)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
     add_executable(${PROJECT_NAME} src/main.cpp ${COMMON_SOURCES})

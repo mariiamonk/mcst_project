@@ -1,9 +1,9 @@
-#include "../include/memory.hpp"
+#include "memory.hpp"
 
 using namespace Cache;
 
 int main() {
-    auto cache = std::make_shared<Cache::Cache>(
+    auto cache = Cache::Cache(
         4 * 1024, 64, 4, 32,
         WritePolicy::WRITE_BACK,
         AllocationPolicy::READ_ALLOCATE,
