@@ -14,7 +14,7 @@ namespace Cache {
         } else if (in.operation == Operation::WRITE) {
             _memory[aligned_addr] = in.data; 
             _memory[aligned_addr].valid_count = in.data.valid_count;  
-            std::cout << "add data in memory" << std::endl;
+            std::cout << "Data written to memory at 0x" << std::hex << in.address << std::dec << std::endl;
         }
         return result;
     }
@@ -44,36 +44,102 @@ namespace Cache {
         }
     }
 
+    
     OutQuery MemoryHierarchy::query(const InQuery& query) {
         OutQuery final_result;
-        return final_result;
-    }
+        bool request_completed = false;
+        InQuery current_query = query;
+        
+        for (size_t level = 0; level < _caches.size() && !request_completed; ++level) {
+            auto& cache = _caches[level];
+            OutQuery cache_result = cache->query(current_query);
+            
+            if (query.operation == Operation::WRITE && 
+                cache->get_write_policy() == WritePolicy::WRITE_THROUGH) {
+                for (auto& mem_query : cache_result.out) {
+                    if (level + 1 < _caches.size()) {
+                        _caches[level+1]->query(mem_query);
+                    } else {
+                        _memory->query(mem_query);
+                    }
+                }
+                
+                if (cache_result.hit) {
+                    final_result = cache_result;
+                    request_completed = true;
+                    continue;
+                }
+            }
 
-    void MemoryHierarchy::add_cache_level(Cache cache) {
-        _caches.push_back(cache);
+            if (cache_result.hit) {
+                final_result = cache_result;
+                request_completed = true;
+            } else {
+                if (cache->should_allocate(current_query.operation)) {
+                    for (auto& mem_query : cache_result.out) {
+                        OutQuery next_result;
+                        if (level + 1 < _caches.size()) {
+                            next_result = _caches[level+1]->query(mem_query);
+                        } else {
+                            next_result = _memory->query(mem_query);
+                        }
+
+                        if (next_result.returned_data) {
+                            uint64_t aligned_addr = mem_query.address & ~(Data::SIZE - 1);
+                            
+                            InQuery update_query{
+                                Operation::WRITE,
+                                aligned_addr,
+                                *next_result.returned_data
+                            };
+                            cache->query(update_query);
+                            
+                            if (current_query.operation == Operation::READ) {
+                                final_result.returned_data = next_result.returned_data;
+                                final_result.hit = true;
+                                request_completed = true;
+                            }
+                        }
+                    }
+                } else {
+                    if (level + 1 < _caches.size()) {
+                        final_result = _caches[level+1]->query(current_query);
+                    } else {
+                        final_result = _memory->query(current_query);
+                    }
+                    request_completed = true;
+                }
+            }
+        }
+        
+        if (!request_completed) {
+            final_result = _memory->query(current_query);
+        }
+        
+        return final_result;
     }
 
     void MemoryHierarchy::print_caches_state() {
         for(auto cache: _caches) {
-            cache.print_cache_state();
+            cache->print_cache_state();
         }
         _memory->print_memory();
     }
 
     void MemoryHierarchy::update_cache_level(size_t level, uint64_t address, const Data& data) {
         auto& cache = _caches[level];
-        if (cache.get_write_policy() == WritePolicy::WRITE_THROUGH) {
+        if (cache->get_write_policy() == WritePolicy::WRITE_THROUGH) {
             InQuery update{Operation::WRITE, address, data};
-            cache.query(update);
+            cache->query(update);
         } else {
-            uint64_t tag = cache.get_tag(address);
-            uint64_t index = cache.get_index(address);
-            auto& line = cache.get_tag_store()[index];
-            auto block_it = cache.find_block(line, tag);
+            uint64_t tag = cache->get_tag(address);
+            uint64_t index = cache->get_index(address);
+            auto& line = cache->get_tag_store()[index];
+            auto block_it = cache->find_block(line, tag);
             
             if (block_it != line.cache_line.end()) {
                 InQuery update{Operation::WRITE, address, data};
-                cache.query(update);
+                cache->query(update);
             }
         }
     }
@@ -86,8 +152,8 @@ namespace Cache {
 
     auto print_result = [](const std::string& op, bool hit, uint64_t address, 
                           const std::optional<Data>& returned_data) {
-        std::cout << (hit ? "Hit" : "Miss") << " at 0x" 
-                  << std::hex << address << std::dec << std::endl;
+        // std::cout << (hit ? "Hit" : "Miss") << " at 0x" 
+        //           << std::hex << address << std::dec << std::endl;
         
         if (op == "ld" && hit && returned_data) {
             std::cout << "Data: ";
@@ -98,19 +164,14 @@ namespace Cache {
         }
     };
 
-    void process_commands(MemoryHierarchy& hierarchy) {
+    void process_commands(std::shared_ptr<MemoryHierarchy> hierarchy) {
         std::string line;
         std::cout << "Enter commands (ld <size> <addr> | st <size> <addr> data) | show:" << std::endl;
 
         while (std::getline(std::cin, line)) {
             std::cout << "> ";
-
-            if (line == "show") {
-                hierarchy.print_caches_state();
-                continue;
-            }
-
             std::istringstream iss(line);
+
             std::string op;
             size_t size;
             uint64_t address;
@@ -126,14 +187,13 @@ namespace Cache {
                 int val;
                 while (iss >> val) values.push_back(val);
                 
-                if (values.size() > Data::SIZE) {
-                    std::cerr << "Error: Too much data (max " << Data::SIZE << " elements)\n> ";
+                if (values.size() != size) {
+                    std::cerr << "Expected " << size << " values, got " 
+                            << values.size() << "\n> ";
                     continue;
                 }
                 
-                if (!values.empty()) {
-                    data.fill(values.data(), values.size());
-                }
+                data.fill(values.data(), size);
             } else if (op != "ld") {
                 std::cerr << "Unknown operation: " << op << "\n> ";
                 continue;
@@ -146,9 +206,9 @@ namespace Cache {
                 size
             };
 
-            OutQuery result = hierarchy.query(query);
+            OutQuery result = hierarchy->query(query);
+            hierarchy->print_caches_state();
             print_result(op, result.hit, address, result.returned_data);
         }
     }
-
 }

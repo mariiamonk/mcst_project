@@ -64,6 +64,7 @@ namespace Cache{
                     std::cout << ", ";
                 }
             }
+            std::cout << std::endl;
         }
     };
 
@@ -73,7 +74,13 @@ namespace Cache{
         bool dirty = false;
         Data data;
 
-        CacheBlock(bool v, uint64_t t, bool d, Data dt): valid(v), tag(t), dirty(d), data(std::move(dt)) {}
+        CacheBlock(bool v, uint64_t t, bool d, Data dt): valid(v), tag(t), dirty(d), data(std::move(dt)) {
+                if (dt.valid_count > 0) {
+                    data.valid_count = dt.valid_count;
+                } else {
+                    data.valid_count = Data::SIZE;
+                }
+        }
     
         CacheBlock(uint64_t t, const Data& d) : tag(t), data(d), valid(true) {}
     };

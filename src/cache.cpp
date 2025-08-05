@@ -4,14 +4,16 @@
 namespace Cache{
     void Cache::handle_write(CacheBlock& block, const Data& data) {
         block.data = data;
-        block.dirty = true;
-            
+        block.dirty = (_write_policy == WritePolicy::WRITE_BACK);
+        
         if (_write_policy == WritePolicy::WRITE_THROUGH) {
             OutQuery result;
-            InQuery mem_op{Operation::WRITE, static_cast<uint64_t>(block.tag), data};
-            result.out.push_back(mem_op);
+            uint64_t address = (block.tag << (_offset_bits + _index_bits)) | 
+                            (get_index(block.tag) << _offset_bits);
+            result.out.push_back({Operation::WRITE, address, data});
         }
     }
+
 
     bool Cache::should_allocate(Operation op) const {
         switch (_alloc_policy) {
@@ -70,63 +72,81 @@ namespace Cache{
         uint64_t index = get_index(query.address);
         auto& line = _tag_store[index];
 
-        // Поиск блока в кэше
         auto block_it = find_block(line, tag);
 
         if (block_it != line.cache_line.end()) { // Cache hit
             result.hit = true;
             
-            // Обновляем порядок в соответствии с политикой вытеснения
             if (_repl_policy != ReplacementPolicy::RANDOM) {
                 move_beg_block(line, block_it);
             }
 
             if (query.operation == Operation::READ) {
-                // Возвращаем данные из кэша
                 result.returned_data = block_it->data;
             } else { // WRITE
-                // Обновляем данные в кэше
                 if (query.data.valid_count > 0) {
                     block_it->data.fill(query.data.buffer.data(), query.data.valid_count);
                 }
-                block_it->dirty = (_write_policy != WritePolicy::WRITE_THROUGH);
                 
                 if (_write_policy == WritePolicy::WRITE_THROUGH) {
-                    // Сквозная запись - сразу в память
+                    // Для сквозной записи сразу отправляем данные в память
                     result.out.emplace_back(InQuery{
                         Operation::WRITE,
                         query.address,
                         block_it->data
                     });
+                    block_it->dirty = false; 
+                } else {
+                    // Для отложенной записи помечаем блок как "грязный"
+                    block_it->dirty = true;
                 }
             }
         } else { // Cache miss
             if (should_allocate(query.operation)) {
-                // Выбираем жертву для вытеснения
                 if (line.count >= _associativity) {
                     auto victim_it = select_victim(line);
                     result.evicted = true;
                     result.evicted_tag = victim_it->tag;
                     
-                    // Если блок "грязный" и политика Write-Back
-                    if (victim_it->dirty && _write_policy == WritePolicy::WRITE_BACK) {
-                        result.out.emplace_back(InQuery{
-                            Operation::WRITE,
-                            (victim_it->tag << (_offset_bits + _index_bits)) | (index << _offset_bits),
-                            victim_it->data
-                        });
+                    if (victim_it->dirty) {
+                        // Если политика Write-Back и блок dirty - записываем в память
+                        if (_write_policy == WritePolicy::WRITE_BACK) {
+                            uint64_t evicted_addr = (victim_it->tag << (_offset_bits + _index_bits)) | 
+                                                (index << _offset_bits);
+                            result.out.emplace_back(InQuery{
+                                Operation::WRITE,
+                                evicted_addr,
+                                victim_it->data
+                            });
+                        }
                     }
                     
-                    // Переиспользуем блок
+                    // Заменяем блок
                     victim_it->tag = tag;
-                    if (query.operation == Operation::WRITE) {
-                        auto& a = *victim_it;
-                        a.data = query.data;
-                        a.dirty = true;
-                    } else {
-                        // Для чтения помечаем как негрязный
+                    victim_it->data = query.operation == Operation::WRITE ? query.data : Data{};
+                    
+                    if (query.operation == Operation::READ) {
+                        victim_it->data.valid_count = Data::SIZE;
+                    }
+                                        
+                    victim_it->valid = true;
+                    
+                    victim_it->dirty = (query.operation == Operation::WRITE) && 
+                                    (_write_policy == WritePolicy::WRITE_BACK);
+                    
+                    // Для WRITE_THROUGH при записи сразу отправляем в память
+                    if (query.operation == Operation::WRITE && 
+                        _write_policy == WritePolicy::WRITE_THROUGH) {
+                        result.out.emplace_back(InQuery{
+                            Operation::WRITE,
+                            query.address,
+                            victim_it->data
+                        });
                         victim_it->dirty = false;
-                        // Запрашиваем данные из нижнего уровня
+                    }
+                    
+                    // Для чтения запрашиваем данные из памяти
+                    if (query.operation == Operation::READ) {
                         result.out.emplace_back(InQuery{
                             Operation::READ,
                             query.address,
@@ -134,15 +154,31 @@ namespace Cache{
                             Data::SIZE
                         });
                     }
-                    victim_it->valid = true;
                     
                     move_beg_block(line, victim_it);
                 } else {
                     // Добавляем новый блок
-                    auto& a = line.cache_line.emplace_front(tag, query.data);
-                    a.valid = true;
-                    a.dirty = (query.operation == Operation::WRITE);
+                    line.cache_line.emplace_front(tag, query.data);
+                    auto& new_block = line.cache_line.front();
+                    new_block.valid = true;
+                    new_block.dirty = (query.operation == Operation::WRITE) && 
+                                    (_write_policy == WritePolicy::WRITE_BACK);
                     line.count++;
+
+                    if (query.operation == Operation::READ) {
+                        new_block.data.valid_count = Data::SIZE;
+                    }
+                    
+                    // Для WRITE_THROUGH при записи сразу отправляем в память
+                    if (query.operation == Operation::WRITE && 
+                        _write_policy == WritePolicy::WRITE_THROUGH) {
+                        result.out.emplace_back(InQuery{
+                            Operation::WRITE,
+                            query.address,
+                            new_block.data
+                        });
+                        new_block.dirty = false;
+                    }
                     
                     if (query.operation == Operation::READ) {
                         result.out.emplace_back(InQuery{
@@ -154,8 +190,17 @@ namespace Cache{
                     }
                 }
             } else {
-                // Прямая запись в память без заведения блока
-                result.out.push_back(query);
+                //Прямая запись в память
+                if (query.operation == Operation::WRITE) {
+                    result.out.push_back(query);
+                } else {
+                    result.out.emplace_back(InQuery{
+                        Operation::READ,
+                        query.address,
+                        {},
+                        Data::SIZE
+                    });
+                }
             }
         }
         
