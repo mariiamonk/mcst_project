@@ -238,9 +238,11 @@ namespace Cache{
                 total_blocks++;
                 if (block.dirty) dirty_blocks++;
 
+                uint64_t full_addr = (block.tag << (_offset_bits + _index_bits)) | (index << _offset_bits);
+
                 std::cout << "  Block " << block_num++ << ": "
                         << "Tag=0x" << std::hex << std::setw(8) << std::setfill('0') 
-                        << block.tag << std::dec << std::setfill(' ')
+                        << block.tag << std::dec << " (addr 0x" << std::hex << full_addr << ")"
                         << " State: " << (block.dirty ? "Dirty" : "Clean")
                         << " Data: [";
 

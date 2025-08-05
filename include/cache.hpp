@@ -150,11 +150,11 @@ namespace Cache{
         auto query(InQuery const&) -> OutQuery;
 
         uint64_t get_tag(uint64_t address) const {
-            return address >> (_offset_bits + _index_bits);
+            return (address >> _offset_bits) >> _index_bits; 
         }
 
         uint64_t get_index(uint64_t address) const {
-            return (address >> _offset_bits) & ((1 << _index_bits) - 1);
+            return (address >> _offset_bits) & ((1ULL << _index_bits) - 1);
         }
         
         uint64_t get_offset(uint64_t address) const {
@@ -170,6 +170,7 @@ namespace Cache{
 
         auto get_write_policy(){return _write_policy;}
         std::unordered_map<size_t, CacheLine>& get_tag_store() { return _tag_store; }
+        auto get_alloc_policy(){return _alloc_policy;}
 
         void handle_write(CacheBlock& block, const Data& data);
 

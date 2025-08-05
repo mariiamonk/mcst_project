@@ -56,7 +56,8 @@ namespace Cache {
             
             if (query.operation == Operation::WRITE && 
                 cache->get_write_policy() == WritePolicy::WRITE_THROUGH) {
-                for (auto& mem_query : cache_result.out) {
+                if (!cache_result.out.empty()) {
+                    auto& mem_query = cache_result.out.front();
                     if (level + 1 < _caches.size()) {
                         _caches[level+1]->query(mem_query);
                     } else {
@@ -76,28 +77,44 @@ namespace Cache {
                 request_completed = true;
             } else {
                 if (cache->should_allocate(current_query.operation)) {
-                    for (auto& mem_query : cache_result.out) {
-                        OutQuery next_result;
-                        if (level + 1 < _caches.size()) {
-                            next_result = _caches[level+1]->query(mem_query);
-                        } else {
-                            next_result = _memory->query(mem_query);
-                        }
+                    if (cache->get_alloc_policy() == AllocationPolicy::BOTH && 
+                        cache->get_write_policy() == WritePolicy::WRITE_BACK &&
+                        query.operation == Operation::WRITE) {
+                        
+                        uint64_t aligned_addr = current_query.address & ~(Data::SIZE - 1);
+                        InQuery update_query{
+                            Operation::WRITE,
+                            aligned_addr,
+                            current_query.data,
+                            Data::SIZE
+                        };
+                        final_result = cache->query(update_query);
+                        request_completed = true;
+                    } 
+                    else {
+                        for (auto& mem_query : cache_result.out) {
+                            OutQuery next_result;
+                            if (level + 1 < _caches.size()) {
+                                next_result = _caches[level+1]->query(mem_query);
+                            } else {
+                                next_result = _memory->query(mem_query);
+                            }
 
-                        if (next_result.returned_data) {
-                            uint64_t aligned_addr = mem_query.address & ~(Data::SIZE - 1);
-                            
-                            InQuery update_query{
-                                Operation::WRITE,
-                                aligned_addr,
-                                *next_result.returned_data
-                            };
-                            cache->query(update_query);
-                            
-                            if (current_query.operation == Operation::READ) {
-                                final_result.returned_data = next_result.returned_data;
-                                final_result.hit = true;
-                                request_completed = true;
+                            if (next_result.returned_data) {
+                                uint64_t aligned_addr = mem_query.address & ~(Data::SIZE - 1);
+                                InQuery update_query{
+                                    Operation::WRITE,
+                                    aligned_addr,
+                                    *next_result.returned_data,
+                                    Data::SIZE
+                                };
+                                auto update_result = cache->query(update_query);
+                                
+                                if (current_query.operation == Operation::READ) {
+                                    final_result.returned_data = next_result.returned_data;
+                                    final_result.hit = true;
+                                    request_completed = true;
+                                }
                             }
                         }
                     }
