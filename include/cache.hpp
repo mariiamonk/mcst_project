@@ -51,7 +51,31 @@ namespace Cache{
             std::copy_n(src, count, buffer.begin());
             valid_count = count;
         }
+
+        void write_data(const int* src, size_t count, size_t offset = 0) {
+            if (offset + count > SIZE) {
+                throw std::out_of_range("Data overflow in write_data");
+            }
+            std::copy_n(src, count, buffer.begin() + offset);
+            valid_count = std::max(valid_count, offset + count);
+        }
+
+        void read_data(int* dst, size_t count, size_t offset = 0) const {
+            std::copy_n(buffer.begin() + offset, count, dst);
+        }
         
+        void clear() {
+            std::fill(buffer.begin(), buffer.end(), 0);
+            valid_count = 0;
+        }
+
+        void resize(size_t new_valid_count) {
+            if (new_valid_count > SIZE) {
+                throw std::out_of_range("New size exceeds Data capacity");
+            }
+            valid_count = new_valid_count;
+        }
+
         void print_data() const {
             if (valid_count == 0) {
                 std::cout << "<no data>";
@@ -150,16 +174,17 @@ namespace Cache{
         auto query(InQuery const&) -> OutQuery;
 
         uint64_t get_tag(uint64_t address) const {
-            return (address >> _offset_bits) >> _index_bits; 
+            return address >> (_offset_bits + _index_bits);
         }
 
         uint64_t get_index(uint64_t address) const {
-            return (address >> _offset_bits) & ((1ULL << _index_bits) - 1);
+            return (address >> _offset_bits) & ((1ULL << _index_bits) - 1ULL);
         }
-        
+
         uint64_t get_offset(uint64_t address) const {
-            return address & ((1 << _offset_bits) - 1);
+            return address & ((1ULL << _offset_bits) - 1ULL);
         }
+       
 
         auto find_block(CacheLine& line, uint64_t tag) { // возвращaем нужный блок
             return std::find_if(line.cache_line.begin(), line.cache_line.end(),

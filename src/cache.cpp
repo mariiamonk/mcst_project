@@ -68,8 +68,14 @@ namespace Cache{
 
     auto Cache::query(InQuery const& query) -> OutQuery {
         OutQuery result;
+        
+        size_t size_bytes = (query.size + 7) / 8;
+        size_t elements = (size_bytes + sizeof(int) - 1) / sizeof(int);
+        elements = std::min(elements, Data::SIZE);
+
         uint64_t tag = get_tag(query.address);
         uint64_t index = get_index(query.address);
+        uint64_t offset = get_offset(query.address) / sizeof(int);
         auto& line = _tag_store[index];
 
         auto block_it = find_block(line, tag);
@@ -82,23 +88,24 @@ namespace Cache{
             }
 
             if (query.operation == Operation::READ) {
-                result.returned_data = block_it->data;
+                Data response;
+                size_t elements_to_read = std::min(elements, Data::SIZE - offset);
+                block_it->data.read_data(response.buffer.data(), elements_to_read, offset);
+                response.valid_count = elements_to_read;
+                result.returned_data = response;
             } else { // WRITE
-                if (query.data.valid_count > 0) {
-                    block_it->data.fill(query.data.buffer.data(), query.data.valid_count);
-                }
+                size_t elements_to_write = std::min(elements, Data::SIZE - offset);
+                block_it->data.write_data(query.data.buffer.data(), elements_to_write, offset);
+                block_it->dirty = (_write_policy == WritePolicy::WRITE_BACK);
                 
                 if (_write_policy == WritePolicy::WRITE_THROUGH) {
-                    // Для сквозной записи сразу отправляем данные в память
                     result.out.emplace_back(InQuery{
                         Operation::WRITE,
                         query.address,
-                        block_it->data
+                        block_it->data,
+                        query.size
                     });
-                    block_it->dirty = false; 
-                } else {
-                    // Для отложенной записи помечаем блок как "грязный"
-                    block_it->dirty = true;
+                    block_it->dirty = false;
                 }
             }
         } else { // Cache miss
@@ -224,32 +231,32 @@ namespace Cache{
         unsigned int total_blocks = 0;
         unsigned int dirty_blocks = 0;
 
-        for (const auto& [index, line] : _tag_store) {
-            if (line.cache_line.empty()) continue;
+        for (const auto& [set_index, cache_line] : _tag_store) {
+            if (cache_line.cache_line.empty()) continue;
 
-            std::cout << "Set #" << std::setw(4) << std::left << index 
-                    << " [" << line.count << "/" << _associativity << " blocks]:\n";
+            std::cout << "Set #" << set_index 
+                    << " [" << cache_line.count << "/" << _associativity << " blocks]:\n";
             
-            unsigned int block_num = 0;
-            for (const auto& block : line.cache_line) {
-                if (!block.valid) continue;
+            int block_counter = 0;
+            for (const auto& cache_block : cache_line.cache_line) {
+                if (!cache_block.valid) continue;
                 
                 isEmpty = false;
                 total_blocks++;
-                if (block.dirty) dirty_blocks++;
+                if (cache_block.dirty) dirty_blocks++;
 
-                uint64_t full_addr = (block.tag << (_offset_bits + _index_bits)) | (index << _offset_bits);
+                uint64_t full_address = (cache_block.tag << (_offset_bits + _index_bits)) | 
+                                    (set_index << _offset_bits);
 
-                std::cout << "  Block " << block_num++ << ": "
-                        << "Tag=0x" << std::hex << std::setw(8) << std::setfill('0') 
-                        << block.tag << std::dec << " (addr 0x" << std::hex << full_addr << ")"
-                        << " State: " << (block.dirty ? "Dirty" : "Clean")
-                        << " Data: [";
-
-                unsigned int show_count = block.data.valid_count;
-                for (size_t i = 0; i < show_count; ++i) {
-                    std::cout << block.data[i];
-                    if (i < show_count - 1) std::cout << ", ";
+                std::cout << "  Block " << block_counter++ << ":"
+                        << "    Tag: 0x" << std::hex << cache_block.tag  
+                        << "    Address: 0x" << full_address  
+                        << "    State: " << (cache_block.dirty ? "Dirty" : "Clean")
+                        << "    Data: [";
+                
+                for (size_t i = 0; i < cache_block.data.valid_count; ++i) {
+                    if (i > 0) std::cout << ", ";
+                    std::cout << std::dec << cache_block.data[i];
                 }
                 std::cout << "]\n";
             }

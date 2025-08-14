@@ -4,15 +4,23 @@ project(cache_project VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(COMMON_SOURCES src/cache.cpp src/memory.cpp)
+find_package(Boost REQUIRED COMPONENTS program_options)
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
-    add_executable(${PROJECT_NAME} src/main.cpp ${COMMON_SOURCES})
-    target_include_directories(${PROJECT_NAME} PRIVATE include)
-endif()
+set(COMMON_SOURCES src/cache.cpp src/memory.cpp)
+set(COMMON_INCLUDES include)
+
+add_executable(cache_project src/main.cpp ${COMMON_SOURCES})
+target_include_directories(cache_project PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(cache_project PRIVATE Boost::program_options)
 
 add_executable(model1 src/model1.cpp ${COMMON_SOURCES})
-target_include_directories(model1 PRIVATE include)
+target_include_directories(model1 PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(model1 PRIVATE Boost::program_options)
 
 add_executable(model2 src/model2.cpp ${COMMON_SOURCES})
-target_include_directories(model2 PRIVATE include)
+target_include_directories(model2 PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(model2 PRIVATE Boost::program_options)
+
+enable_testing()
+add_test(NAME test1 COMMAND model1 --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test1.txt --trace 3)
+add_test(NAME test2 COMMAND model2 --test ${CMAKE_CURRENT_SOURCE_DIR}/tests/test2.txt --trace 3)
