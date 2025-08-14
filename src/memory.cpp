@@ -58,14 +58,14 @@ namespace Cache {
             target.write_data(in.data.buffer.data(), elements_to_write);
             target.valid_count = elements_to_write;
             
-            // if (_trace_level >= TraceLevel::FULL) {
-            //     std::cout << "MEM: WRITE data=[";
-            //     for (size_t i = 0; i < elements_to_write; ++i) {
-            //         std::cout << in.data[i];
-            //         if (i < elements_to_write - 1) std::cout << ", ";
-            //     }
-            //     std::cout << "]" << std::endl;
-            // }
+            if (_trace_level >= TraceLevel::FULL) {
+                std::cout << "MEM: WRITE data=[";
+                for (size_t i = 0; i < elements_to_write; ++i) {
+                    std::cout << in.data[i];
+                    if (i < elements_to_write - 1) std::cout << ", ";
+                }
+                std::cout << "]" << std::endl;
+            }
         }
         return result;
     }
@@ -74,10 +74,10 @@ namespace Cache {
         if (_trace_level == TraceLevel::NONE) return;
         
         std::cout << "L" << level << ": " 
-                  << (query.operation == Operation::READ ? "READ" : "WRITE")
-                  << " addr=0x" << std::hex << query.address << std::dec
-                  << " size=" << query.size
-                  << " - " << (result.hit ? "HIT" : "MISS");
+                << (query.operation == Operation::READ ? "READ" : "WRITE")
+                << " addr=0x" << std::hex << query.address << std::dec
+                << " size=" << query.size
+                << " - " << (result.hit ? "HIT" : "MISS");
         
         if (_trace_level >= TraceLevel::FULL) {
             if (result.returned_data) {
@@ -129,6 +129,8 @@ namespace Cache {
         for (size_t level = 0; level < _caches.size() && !request_completed; ++level) {
             auto& cache = _caches[level];
             OutQuery cache_result = cache->query(current_query);
+
+            log_query(level, current_query, cache_result);
             
             if (query.operation == Operation::WRITE && 
                 cache->get_write_policy() == WritePolicy::WRITE_THROUGH) {
