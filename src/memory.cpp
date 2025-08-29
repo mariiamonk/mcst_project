@@ -28,7 +28,7 @@ namespace Cache {
         OutQuery result;
         result.hit = true;
         
-        size_t size_bytes = (in.size + 7) / 8; 
+        size_t size_bytes = in.size ; 
         size_t elements = (size_bytes + sizeof(int) - 1) / sizeof(int); 
         elements = std::min(elements, Data::SIZE); 
 
@@ -124,133 +124,90 @@ namespace Cache {
     OutQuery MemoryHierarchy::query(const InQuery& query) {
         OutQuery final_result;
         bool request_completed = false;
-        InQuery current_query = query;
         
         for (size_t level = 0; level < _caches.size() && !request_completed; ++level) {
             auto& cache = _caches[level];
-            OutQuery cache_result = cache->query(current_query);
+            OutQuery cache_result = cache->query(query);
 
-            log_query(level, current_query, cache_result);
+            log_query(level, query, cache_result);
             
             if (query.operation == Operation::WRITE && 
-                cache->get_write_policy() == WritePolicy::WRITE_THROUGH) {
-                if (!cache_result.out.empty()) {
-                    auto& mem_query = cache_result.out.front();
-                    // Сохраняем оригинальный размер
-                    mem_query.size = current_query.size;
+                cache->get_write_policy() == WritePolicy::WRITE_THROUGH &&
+                cache_result.hit) {
+                for (auto& mem_query : cache_result.out) {
                     if (level + 1 < _caches.size()) {
                         _caches[level+1]->query(mem_query);
                     } else {
                         _memory->query(mem_query);
                     }
                 }
-                
-                if (cache_result.hit) {
-                    final_result = cache_result;
-                    request_completed = true;
-                    continue;
-                }
+                final_result = cache_result;
+                request_completed = true;
+                continue;
             }
 
             if (cache_result.hit) {
                 final_result = cache_result;
                 request_completed = true;
             } else {
-                if (cache->should_allocate(current_query.operation)) {
-                    if (level + 1 < _caches.size()) {
-                        for (auto& mem_query : cache_result.out) {
-                            mem_query.size = current_query.size;
-                            OutQuery next_result = _caches[level+1]->query(mem_query);
-
-                            if (next_result.returned_data) {
-                                Data partial_data;
-                                std::fill(partial_data.buffer.begin(), partial_data.buffer.end(), 0);
-                                size_t offset = current_query.address % Data::SIZE;
-                                size_t elements = std::min(
-                                    (current_query.size + 31) / 32,
-                                    Data::SIZE - offset
-                                );
-                                
-                                next_result.returned_data->read_data(
-                                    partial_data.buffer.data(), 
-                                    elements,
-                                    offset
-                                );
-                                partial_data.valid_count = elements;
-
-                                uint64_t aligned_addr = current_query.address & ~(Data::SIZE - 1);
-                                InQuery update_query{
-                                    Operation::WRITE,
-                                    aligned_addr,
-                                    partial_data,
-                                    current_query.address % Data::SIZE
-                                };
-                                
-                                cache->query(update_query);
-                                
-                                if (current_query.operation == Operation::READ) {
-                                    final_result.returned_data = partial_data;
-                                    final_result.hit = true;
-                                    request_completed = true;
-                                }
-                            }
+                if (cache->should_allocate(query.operation)) {
+                    for (auto& mem_query : cache_result.out) {
+                        OutQuery next_result;
+                        if (level + 1 < _caches.size()) {
+                            next_result = _caches[level+1]->query(mem_query);
+                        } else {
+                            next_result = _memory->query(mem_query);
                         }
-                    } else {
-                        current_query.size = query.size;
-                        OutQuery mem_result = _memory->query(current_query);
-                        
-                        if (mem_result.returned_data) {
-                            Data partial_data;
-                            size_t offset = current_query.address % Data::SIZE;
-                            size_t elements = std::min(
-                                (current_query.size + 31) / 32, 
-                                Data::SIZE - offset
-                            );
-                            
-                            mem_result.returned_data->read_data(
-                                partial_data.buffer.data(), 
-                                elements,
-                                offset
-                            );
-                            partial_data.valid_count = elements;
 
-                            uint64_t aligned_addr = current_query.address & ~(Data::SIZE - 1);
+                        if (query.operation == Operation::READ && next_result.returned_data) {
+                            uint64_t block_mask = ~(16 - 1);
+                            uint64_t aligned_addr = query.address & block_mask;
+                            
                             InQuery update_query{
                                 Operation::WRITE,
                                 aligned_addr,
-                                partial_data,
-                                current_query.size
+                                *next_result.returned_data,
+                                16
                             };
                             
                             cache->query(update_query);
                             
-                            if (current_query.operation == Operation::READ) {
-                                final_result.returned_data = partial_data;
-                                final_result.hit = true;
-                                request_completed = true;
-                            }
+                            Data response_data;
+                            size_t offset = query.address - aligned_addr;
+                            size_t elements_to_read = std::min(
+                                (query.size + sizeof(int) - 1) / sizeof(int),
+                                Data::SIZE - offset / sizeof(int)
+                            );
+                            
+                            next_result.returned_data->read_data(
+                                response_data.buffer.data(),
+                                elements_to_read,
+                                offset / sizeof(int)
+                            );
+                            response_data.valid_count = elements_to_read;
+                            
+                            final_result.returned_data = response_data;
+                            final_result.hit = true;
+                            request_completed = true;
                         }
                     }
                 } else {
+                   
                     if (level + 1 < _caches.size()) {
-                        current_query.size = query.size; 
-                        final_result = _caches[level+1]->query(current_query);
+                        final_result = _caches[level+1]->query(query);
                     } else {
-                        current_query.size = query.size; 
-                        final_result = _memory->query(current_query);
+                        final_result = _memory->query(query);
                     }
                     request_completed = true;
                 }
             }
         }
-        
         if (!request_completed) {
-            current_query.size = query.size;
-            final_result = _memory->query(current_query);
+            final_result = _memory->query(query);
         }
         
         return final_result;
-    } 
+    }
 
 
     void MemoryHierarchy::print_caches_state() {
@@ -296,8 +253,11 @@ namespace Cache {
             std::istringstream iss(line);
             std::string op;
 
-            std::cout << line << "\n";
+            if (line.empty() || std::all_of(line.begin(), line.end(), ::isspace)) {
+            continue;
+        }
 
+            std::cout <<"\n" << line << "\n";
 
             if (line == "show") {
                 hierarchy->print_caches_state();
@@ -325,7 +285,7 @@ namespace Cache {
                     }
                 }
                 
-                size_t size_bytes = (size + 7) / 8; 
+                size_t size_bytes = size ; 
                 size_t expected_values = size_bytes / sizeof(int);
                 
                 if (values.size() != expected_values) {
@@ -388,7 +348,7 @@ namespace Cache {
             std::istringstream iss(line);
             std::string op;
 
-
+            if(line == "/n"){continue;}
             if (line == "show") {
                 hierarchy->print_caches_state();
                 continue;
@@ -397,7 +357,7 @@ namespace Cache {
             uint64_t address;
             Data data;
 
-            if (!(iss >> op >> size >> std::hex >> address >> std::dec)) {
+            if (!(iss >> op >> size >> std::hex >> address >> std::dec) and line != "/n") {
                 std::cerr << "Invalid command format\n> ";
                 continue;
             }
@@ -415,9 +375,8 @@ namespace Cache {
                         continue;
                     }
                 }
-                
-                size_t size_bytes = (size + 7) / 8; 
-                size_t expected_values = size_bytes / sizeof(int);
+
+                size_t expected_values = size / sizeof(int);
                 
                 if (values.size() != expected_values) {
                     std::cerr << "Size mismatch. Expected " << expected_values
@@ -453,5 +412,50 @@ namespace Cache {
             }
             hierarchy->print_changes();
         }
+    }
+
+    boost::program_options::options_description create_options_description()
+    {
+        boost::program_options::options_description desc("Single Cache Model Options");
+        desc.add_options()
+            ("help,h", "Show help message")
+            ("trace,t", boost::program_options::value<int>()->default_value(0), 
+            "Trace level (0=none, 1=basic, 2=full)")
+            ("init,i", boost::program_options::value<int>()->default_value(0), 
+            "Memory init mode (0=zeros, 1=addresses)")
+            ("test", boost::program_options::value<std::string>(), 
+            "Run test from file");
+        return desc;
+    }
+
+    boost::program_options::variables_map parse_command_line_args(
+        int argc, char* argv[], 
+        const boost::program_options::options_description& desc)
+    {
+        boost::program_options::variables_map vm;
+        boost::program_options::store(
+            boost::program_options::parse_command_line(argc, argv, desc), vm);
+        boost::program_options::notify(vm);
+        return vm;
+    }
+
+    bool handle_help_option(const boost::program_options::variables_map& vm,
+                                const boost::program_options::options_description& desc)
+    {
+        if (vm.count("help")) {
+            std::cout << desc << "\n";
+            return true;
+        }
+        return false;
+    }
+
+    TraceLevel get_trace_level(const boost::program_options::variables_map& vm)
+    {
+        return static_cast<TraceLevel>(vm["trace"].as<int>());
+    }
+
+    MemoryInitMode get_memory_init_mode(const boost::program_options::variables_map& vm)
+    {
+        return static_cast<MemoryInitMode>(vm["init"].as<int>());
     }
 }

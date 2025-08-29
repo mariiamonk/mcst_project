@@ -44,24 +44,26 @@ namespace Cache{
     }
 
     void Cache::add_block(CacheLine& line, uint64_t tag, Data data, OutQuery& result) {
-        if (line.count < _associativity) { //есть место для записи
-            line.cache_line.emplace_front(tag, data);
+        size_t block_id = generate_block_id();
+        
+        if (line.count < _associativity) {
+            line.cache_line.emplace_front(block_id, tag, data);
             line.count++;
-        } else { //иначе по LRU вытесняем последний блок
+        } else {
             auto lru_it = std::prev(line.cache_line.end());
             CacheBlock& evicted_block = *lru_it;
 
             result.evicted = true;
             result.evicted_tag = evicted_block.tag;
 
-            //если блок изменен, сохраняем его
             if (evicted_block.dirty) {
                 uint64_t address = (evicted_block.tag << (_offset_bits + _index_bits)) | 
                                 (get_index(result.evicted_tag) << _offset_bits);
                 result.out.push_back({Operation::WRITE, address, evicted_block.data});
             }
 
-            evicted_block = {true, tag, false, std::move(data)};
+            size_t old_id = evicted_block.id;
+            *lru_it = CacheBlock(old_id, true, tag, false, std::move(data));
             move_beg_block(line, lru_it);
         }
     }
@@ -69,13 +71,13 @@ namespace Cache{
     auto Cache::query(InQuery const& query) -> OutQuery {
         OutQuery result;
         
-        size_t size_bytes = (query.size + 7) / 8;
+        size_t size_bytes = query.size;
         size_t elements = (size_bytes + sizeof(int) - 1) / sizeof(int);
         elements = std::min(elements, Data::SIZE);
 
         uint64_t tag = get_tag(query.address);
         uint64_t index = get_index(query.address);
-        uint64_t offset = get_offset(query.address) / sizeof(int);
+        uint64_t offset = get_offset(query.address);
         auto& line = _tag_store[index];
 
         auto block_it = find_block(line, tag);
@@ -113,7 +115,7 @@ namespace Cache{
                 if (line.count >= _associativity) {
                     auto victim_it = select_victim(line);
                     result.evicted = true;
-                    result.evicted_tag = victim_it->tag;
+                    result.evicted_tag = victim_it->id;
                     
                     if (victim_it->dirty) {
                         // Если политика Write-Back и блок dirty - записываем в память
@@ -136,18 +138,21 @@ namespace Cache{
                         victim_it->data.valid_count = Data::SIZE;
                     }
                                         
-                    victim_it->valid = true;
-                    
-                    victim_it->dirty = (query.operation == Operation::WRITE) && 
-                                    (_write_policy == WritePolicy::WRITE_BACK);
+                    *victim_it = CacheBlock(victim_it->id, true, tag, 
+                       (query.operation == Operation::WRITE) && 
+                       (_write_policy == WritePolicy::WRITE_BACK),
+                       query.operation == Operation::WRITE ? query.data : Data{});
                     
                     // Для WRITE_THROUGH при записи сразу отправляем в память
                     if (query.operation == Operation::WRITE && 
                         _write_policy == WritePolicy::WRITE_THROUGH) {
+                        victim_it->data = query.data;
+                        victim_it->data.valid_count = std::min(query.data.valid_count, Data::SIZE);
+                        
                         result.out.emplace_back(InQuery{
                             Operation::WRITE,
                             query.address,
-                            victim_it->data
+                            query.data  // Send the actual data to memory
                         });
                         victim_it->dirty = false;
                     }
@@ -165,9 +170,10 @@ namespace Cache{
                     move_beg_block(line, victim_it);
                 } else {
                     // Добавляем новый блок
-                    line.cache_line.emplace_front(tag, query.data);
+                    line.cache_line.emplace_front(generate_block_id(), tag, query.data);
                     auto& new_block = line.cache_line.front();
                     new_block.valid = true;
+                    new_block.data.valid_count = Data::SIZE;
                     new_block.dirty = (query.operation == Operation::WRITE) && 
                                     (_write_policy == WritePolicy::WRITE_BACK);
                     line.count++;
@@ -216,16 +222,6 @@ namespace Cache{
 
 
     void Cache::print_cache_state(){
-        // std::cout << "\n=== Cache Configuration ===\n"
-        // << "Size:        " << size << " b\n"
-        // << "Block size:  " << block_size << " b\n"
-        // << "Associativity: " << associativity << "\n"
-        // << "Policy:      " 
-        //         << (write_policy_ == WritePolicy::WRITE_BACK ? "Write-Back" : "Write-Through") << ", "
-        //         << (alloc_policy_ == AllocationPolicy::WRITE_ALLOCATE ? "Write-Allocate" : "Read-Allocate") << ", "
-        //         << (repl_policy_ == ReplacementPolicy::LRU ? "LRU" : "MRU")
-        //         << "\n";
-
         std::cout << "\nCache:\n";
         bool isEmpty = true;
         unsigned int total_blocks = 0;
@@ -248,7 +244,7 @@ namespace Cache{
                 uint64_t full_address = (cache_block.tag << (_offset_bits + _index_bits)) | 
                                     (set_index << _offset_bits);
 
-                std::cout << "  Block " << block_counter++ << ":"
+                std::cout << "  Block " << block_counter++
                         << "    Tag: 0x" << std::hex << cache_block.tag  
                         << "    Address: 0x" << full_address  
                         << "    State: " << (cache_block.dirty ? "Dirty" : "Clean")

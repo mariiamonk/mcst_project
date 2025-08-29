@@ -36,6 +36,10 @@ namespace Cache{
         std::array<int, SIZE> buffer;     
         size_t valid_count = 0;            // Число действительных элементов
 
+        Data() : valid_count(0) {
+            std::fill(buffer.begin(), buffer.end(), 0);
+        }
+
         int& operator[](size_t index) {
             if (index >= SIZE) throw std::out_of_range("Data index out of range");
             return buffer[index];
@@ -93,20 +97,26 @@ namespace Cache{
     };
 
     struct CacheBlock {
+        size_t id;
         bool valid = false;       
         unsigned long int tag{};
         bool dirty = false;
         Data data;
 
-        CacheBlock(bool v, uint64_t t, bool d, Data dt): valid(v), tag(t), dirty(d), data(std::move(dt)) {
-                if (dt.valid_count > 0) {
-                    data.valid_count = dt.valid_count;
-                } else {
-                    data.valid_count = Data::SIZE;
-                }
+        CacheBlock(size_t block_id, bool v, uint64_t t, bool d, Data dt) 
+            : id(block_id), valid(v), tag(t), dirty(d), data(std::move(dt)) {
+            if (dt.valid_count > 0) {
+                data.valid_count = dt.valid_count;
+            } else {
+                data.valid_count = Data::SIZE;
+            }
+            if (dt.valid_count < Data::SIZE) {
+                std::fill(data.buffer.begin() + dt.valid_count, data.buffer.end(), 0);
+            }
         }
-    
-        CacheBlock(uint64_t t, const Data& d) : tag(t), data(d), valid(true) {}
+        
+        CacheBlock(size_t block_id, uint64_t t, const Data& d) 
+            : id(block_id), tag(t), data(d), valid(true) {}
     };
 
     struct CacheLine {
@@ -152,7 +162,9 @@ namespace Cache{
         size_t _num_lines; // число строк, считаем через размер и ассоциативность
         size_t _offset_bits; // вспомогательные значения для адреса
         size_t _index_bits;  
-        size_t _tag_bits;    
+        size_t _tag_bits;   
+        
+        size_t _next_block_id = 0;
 
         std::unordered_map<size_t, CacheLine> _tag_store;
     public:
@@ -170,6 +182,8 @@ namespace Cache{
                 _tag_store[i] = line;
             }
         }
+
+        size_t generate_block_id() { return _next_block_id++; }
 
         auto query(InQuery const&) -> OutQuery;
 

@@ -4,6 +4,7 @@
 #include <memory>
 #include <sstream>
 #include <unordered_set>
+#include <boost/program_options.hpp>
 
 namespace Cache {
 
@@ -39,7 +40,6 @@ namespace Cache {
 
         void print_modified_memory() {
             if (_modified_addresses.empty()) {
-                std::cout << "No memory modifications since last print\n";
                 return;
             }
 
@@ -97,5 +97,14 @@ namespace Cache {
 
 void process_commands(std::shared_ptr<MemoryHierarchy> hierarchy);
 void run_tests(const std::string& test_file, std::shared_ptr<MemoryHierarchy> hierarchy);
+
+boost::program_options::options_description create_options_description();
+boost::program_options::variables_map parse_command_line_args(
+    int argc, char* argv[], 
+    const boost::program_options::options_description& desc);
+bool handle_help_option(const boost::program_options::variables_map& vm,
+                       const boost::program_options::options_description& desc);
+TraceLevel get_trace_level(const boost::program_options::variables_map& vm);
+MemoryInitMode get_memory_init_mode(const boost::program_options::variables_map& vm);
 
 }
