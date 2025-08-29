@@ -118,7 +118,6 @@ namespace Cache{
                     result.evicted_tag = victim_it->id;
                     
                     if (victim_it->dirty) {
-                        // Если политика Write-Back и блок dirty - записываем в память
                         if (_write_policy == WritePolicy::WRITE_BACK) {
                             uint64_t evicted_addr = (victim_it->tag << (_offset_bits + _index_bits)) | 
                                                 (index << _offset_bits);
@@ -152,7 +151,7 @@ namespace Cache{
                         result.out.emplace_back(InQuery{
                             Operation::WRITE,
                             query.address,
-                            query.data  // Send the actual data to memory
+                            query.data 
                         });
                         victim_it->dirty = false;
                     }
